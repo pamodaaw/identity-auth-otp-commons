@@ -549,7 +549,7 @@ public abstract class AbstractOTPProgressiveEnrollmentHandler {
         StringBuilder queryParams = new StringBuilder(FrameworkUtils.getQueryStringWithFrameworkContextId(
                 context.getQueryParams(), context.getCallerSessionKey(), context.getContextIdentifier()))
                 .append(AuthenticatorConstants.AUTHENTICATORS_QUERY_PARAM).append(authenticatorName)
-                .append(AuthenticatorUtils.getMultiOptionURIQueryString(request));
+                .append(AuthenticatorUtils.getMultiOptionURIQueryString(request, context));
         if (StringUtils.isNotBlank(errorQueryParams)) {
             queryParams.append(errorQueryParams);
         }
@@ -569,7 +569,7 @@ public abstract class AbstractOTPProgressiveEnrollmentHandler {
         String queryParams = FrameworkUtils.getQueryStringWithFrameworkContextId(context.getQueryParams(),
                 context.getCallerSessionKey(), context.getContextIdentifier())
                 + AuthenticatorConstants.AUTHENTICATORS_QUERY_PARAM + authenticatorName + errorQueryParams
-                + AuthenticatorUtils.getMultiOptionURIQueryString(request);
+                + AuthenticatorUtils.getMultiOptionURIQueryString(request, context);
         try {
             response.sendRedirect(FrameworkUtils.appendQueryParamsStringToUrl(getErrorPageUrl(context),
                     queryParams));

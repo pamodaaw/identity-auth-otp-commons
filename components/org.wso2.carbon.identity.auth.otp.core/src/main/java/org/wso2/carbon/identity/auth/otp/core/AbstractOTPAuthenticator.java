@@ -1011,7 +1011,7 @@ public abstract class AbstractOTPAuthenticator extends AbstractApplicationAuthen
             throws AuthenticationFailedException {
 
         try {
-            String multiOptionURIQueryString = AuthenticatorUtils.getMultiOptionURIQueryString(request);
+            String multiOptionURIQueryString = AuthenticatorUtils.getMultiOptionURIQueryString(request, context);
             String userName;
             userName = context.getLastAuthenticatedUser() != null
                     ? context.getLastAuthenticatedUser().getUserName()
@@ -1122,7 +1122,7 @@ public abstract class AbstractOTPAuthenticator extends AbstractApplicationAuthen
         StringBuilder queryParamsBuilder = new StringBuilder();
         String queryParams = FrameworkUtils.getQueryStringWithFrameworkContextId(context.getQueryParams(),
                 context.getCallerSessionKey(), context.getContextIdentifier());
-        String multiOptionURI = AuthenticatorUtils.getMultiOptionURIQueryString(request);
+        String multiOptionURI = AuthenticatorUtils.getMultiOptionURIQueryString(request, context);
         queryParamsBuilder.append(queryParams)
                 .append(AUTHENTICATORS_QUERY_PARAM).append(getName())
                 .append(USERNAME_PARAM).append(username)
@@ -1673,7 +1673,7 @@ public abstract class AbstractOTPAuthenticator extends AbstractApplicationAuthen
         redirectUrl.append("?");
 
         String queryParams = context.getContextIdIncludedQueryParams();
-        String multiOptionURI = AuthenticatorUtils.getMultiOptionURIQueryString(request);
+        String multiOptionURI = AuthenticatorUtils.getMultiOptionURIQueryString(request, context);
         try {
             LOG.debug("Redirecting to identifier first flow since no authenticated user was found");
             if (queryParams != null) {

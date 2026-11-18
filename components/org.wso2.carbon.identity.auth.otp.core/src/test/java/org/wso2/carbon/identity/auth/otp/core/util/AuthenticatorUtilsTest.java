@@ -24,17 +24,27 @@ import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.AuthenticatorConfig;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.SequenceConfig;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.StepConfig;
+import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 import org.wso2.carbon.identity.central.log.mgt.utils.LoggerUtils;
 import org.wso2.carbon.utils.DiagnosticLog;
 
+import javax.servlet.http.HttpServletRequest;
+
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 
@@ -44,6 +54,12 @@ import static org.mockito.Mockito.times;
 public class AuthenticatorUtilsTest {
 
     private static final String PARAM_NAME = "testParam";
+    private static final String MULTI_OPTION_URI = "multiOptionURI";
+    private static final String MULTI_OPTION_URI_PARAM = "&multiOptionURI=";
+    private static final String SMS_OTP = "sms-otp-authenticator";
+    private static final String EMAIL_OTP = "email-otp-authenticator";
+    private static final String TOTP = "totp";
+    private static final String PAGE_URL = "https://localhost:9443/authenticationendpoint/login.do?sessionDataKey=k";
 
     private MockedStatic<LoggerUtils> loggerUtilsMock;
 
@@ -281,5 +297,142 @@ public class AuthenticatorUtilsTest {
             AuthenticatorUtils.triggerDiagnosticLog("c", "a", "msg",
                     DiagnosticLog.ResultStatus.SUCCESS, level);
         }
+    }
+
+    /**
+     * Build an authentication context whose current step carries the given authenticators.
+     *
+     * @param authenticatorNames Authenticator names of the current step, null to leave the step map empty.
+     * @return AuthenticationContext.
+     */
+    private AuthenticationContext contextWithCurrentStepOptions(String... authenticatorNames) {
+
+        AuthenticationContext context = new AuthenticationContext();
+        SequenceConfig sequenceConfig = new SequenceConfig();
+        Map<Integer, StepConfig> stepMap = new HashMap<>();
+        context.setCurrentStep(2);
+        if (authenticatorNames != null) {
+            List<AuthenticatorConfig> authenticatorList = new ArrayList<>();
+            for (String name : authenticatorNames) {
+                AuthenticatorConfig authenticatorConfig = new AuthenticatorConfig();
+                authenticatorConfig.setName(name);
+                authenticatorList.add(authenticatorConfig);
+            }
+            StepConfig stepConfig = new StepConfig();
+            stepConfig.setOrder(2);
+            stepConfig.setAuthenticatorList(authenticatorList);
+            stepMap.put(2, stepConfig);
+        }
+        sequenceConfig.setStepMap(stepMap);
+        context.setSequenceConfig(sequenceConfig);
+        return context;
+    }
+
+    @DataProvider(name = "multiOptionURIData")
+    public Object[][] multiOptionURIData() {
+
+        String threeOptions = PAGE_URL + "&authenticators=" + SMS_OTP + "%3ALOCAL%3B" + TOTP + "%3ALOCAL%3B"
+                + EMAIL_OTP + "%3ALOCAL&sp=app";
+        String threeOptionsLast = PAGE_URL + "&authenticators=" + SMS_OTP + "%3ALOCAL%3B" + TOTP + "%3ALOCAL%3B"
+                + EMAIL_OTP + "%3ALOCAL";
+        String decodedSeparators = PAGE_URL + "&authenticators=" + SMS_OTP + ":LOCAL;" + TOTP + ":LOCAL&sp=app";
+        String noOptionList = PAGE_URL + "&sp=app";
+        String federated = PAGE_URL + "&authenticators=GoogleOIDCAuthenticator%3AGoogle%3B" + TOTP + "%3ALOCAL";
+
+        return new Object[][] {
+                {"Keeps the URI when its options are the options of the current step",
+                        threeOptions, new String[] {SMS_OTP, TOTP, EMAIL_OTP}, true},
+                {"Drops the URI when the script narrowed the current step to a single option",
+                        threeOptions, new String[] {EMAIL_OTP}, false},
+                {"Drops the URI when the current step dropped one of the options",
+                        threeOptions, new String[] {SMS_OTP, TOTP}, false},
+                {"Drops the URI when the current step has an option the URI does not carry",
+                        threeOptions, new String[] {SMS_OTP, TOTP, EMAIL_OTP, "backup-code-authenticator"}, false},
+                {"Keeps the URI when the options match ignoring case and order",
+                        threeOptions, new String[] {"TOTP", EMAIL_OTP.toUpperCase(), SMS_OTP}, true},
+                {"Keeps the URI when the option list is the last query param",
+                        threeOptionsLast, new String[] {SMS_OTP, TOTP, EMAIL_OTP}, true},
+                {"Keeps the URI when the option list separators are not percent encoded",
+                        decodedSeparators, new String[] {SMS_OTP, TOTP}, true},
+                {"Drops the URI with unencoded separators when the options do not match",
+                        decodedSeparators, new String[] {EMAIL_OTP}, false},
+                {"Keeps the URI when it carries no option list",
+                        noOptionList, new String[] {EMAIL_OTP}, true},
+                {"Keeps the URI when a federated option matches by authenticator name",
+                        federated, new String[] {"GoogleOIDCAuthenticator", TOTP}, true},
+                {"Keeps the URI when the current step cannot be resolved",
+                        threeOptions, null, true},
+        };
+    }
+
+    @Test(dataProvider = "multiOptionURIData",
+            description = "getMultiOptionURIQueryString keeps the URI only when it is for the current step")
+    public void testGetMultiOptionURIQueryStringForCurrentStep(String scenario, String multiOptionURI,
+                                                               String[] stepOptions, boolean expectKept) {
+
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getParameter(MULTI_OPTION_URI)).thenReturn(multiOptionURI);
+        AuthenticationContext context = contextWithCurrentStepOptions(stepOptions);
+
+        String result = AuthenticatorUtils.getMultiOptionURIQueryString(request, context);
+
+        if (expectKept) {
+            Assert.assertTrue(result.startsWith(MULTI_OPTION_URI_PARAM), scenario);
+            Assert.assertTrue(result.length() > MULTI_OPTION_URI_PARAM.length(), scenario);
+        } else {
+            Assert.assertEquals(result, "", scenario);
+        }
+    }
+
+    @Test(description = "getMultiOptionURIQueryString returns empty when the request carries no multi option URI")
+    public void testGetMultiOptionURIQueryStringWithoutParam() {
+
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getParameter(MULTI_OPTION_URI)).thenReturn(null);
+
+        Assert.assertEquals(AuthenticatorUtils.getMultiOptionURIQueryString(request,
+                contextWithCurrentStepOptions(EMAIL_OTP)), "");
+    }
+
+    @Test(description = "getMultiOptionURIQueryString returns empty when the request is null")
+    public void testGetMultiOptionURIQueryStringWithNullRequest() {
+
+        Assert.assertEquals(AuthenticatorUtils.getMultiOptionURIQueryString(null,
+                contextWithCurrentStepOptions(EMAIL_OTP)), "");
+    }
+
+    @Test(description = "getMultiOptionURIQueryString keeps an empty multi option URI as it was handled before")
+    public void testGetMultiOptionURIQueryStringWithBlankURI() {
+
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getParameter(MULTI_OPTION_URI)).thenReturn("");
+
+        Assert.assertEquals(AuthenticatorUtils.getMultiOptionURIQueryString(request,
+                contextWithCurrentStepOptions(EMAIL_OTP)), MULTI_OPTION_URI_PARAM);
+    }
+
+    @Test(description = "getMultiOptionURIQueryString keeps the URI when no context is given")
+    public void testGetMultiOptionURIQueryStringWithNullContext() {
+
+        String multiOptionURI = PAGE_URL + "&authenticators=" + SMS_OTP + "%3ALOCAL%3B" + TOTP + "%3ALOCAL";
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getParameter(MULTI_OPTION_URI)).thenReturn(multiOptionURI);
+
+        Assert.assertTrue(AuthenticatorUtils.getMultiOptionURIQueryString(request, null)
+                .startsWith(MULTI_OPTION_URI_PARAM));
+    }
+
+    @Test(description = "The request only overload keeps the multi option URI as it was handled before")
+    public void testGetMultiOptionURIQueryStringRequestOnlyOverloadIsUnchanged() {
+
+        String multiOptionURI = PAGE_URL + "&authenticators=" + SMS_OTP + "%3ALOCAL%3B" + TOTP + "%3ALOCAL";
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getParameter(MULTI_OPTION_URI)).thenReturn(multiOptionURI);
+
+        Assert.assertTrue(AuthenticatorUtils.getMultiOptionURIQueryString(request)
+                .startsWith(MULTI_OPTION_URI_PARAM));
+        Assert.assertEquals(AuthenticatorUtils.getMultiOptionURIQueryString(request),
+                AuthenticatorUtils.getMultiOptionURIQueryString(request,
+                        contextWithCurrentStepOptions(SMS_OTP, TOTP)));
     }
 }
