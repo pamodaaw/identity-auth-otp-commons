@@ -58,9 +58,11 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.wso2.carbon.identity.auth.otp.core.constant.AuthenticatorConstants.CODE;
+import static org.wso2.carbon.identity.auth.otp.core.enrollment.EnrollmentConstants.FAIL_STEP;
 import static org.wso2.carbon.identity.auth.otp.core.constant.AuthenticatorConstants.DEFAULT_OTP_RESEND_ATTEMPTS_CONTEXT_PROPERTY_NAME;
 import static org.wso2.carbon.identity.auth.otp.core.constant.AuthenticatorConstants.DEFAULT_OTP_RETRY_ATTEMPTS_CONTEXT_PROPERTY_NAME;
 import static org.wso2.carbon.identity.auth.otp.core.constant.AuthenticatorConstants.MAXIMUM_ALLOWED_FAILURE_LIMIT;
@@ -178,6 +180,32 @@ public class AbstractOTPAuthenticatorFlowTest {
 
         Assert.assertEquals(status, AuthenticatorFlowStatus.INCOMPLETE);
         Assert.assertNotNull(context.getProperty(OTP), "OTP should be set in context after initiateAuthenticationRequest");
+    }
+
+    @Test(description = "process() with INITIAL_OTP scenario returns FAIL_COMPLETED without initiating the OTP " +
+            "when the enrollment handler marks the step to fail")
+    public void testProcess_InitialOtpScenario_EnrollmentBlocked_ReturnsFailCompleted()
+            throws Exception {
+
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        HttpServletResponse response = mock(HttpServletResponse.class);
+        when(request.getParameter(CODE)).thenReturn(null);
+        when(request.getParameter(RESEND)).thenReturn(null);
+        when(request.getParameter(USERNAME)).thenReturn(TEST_USER);
+        doNothing().when(response).sendRedirect(anyString());
+
+        AuthenticationContext context = createContextWithAuthenticatedUser(TEST_USER);
+        context.setRetrying(false);
+        context.setCurrentStep(1);
+        authenticator.setFailStepOnInitiation(true);
+
+        AuthenticatorFlowStatus status = authenticator.process(request, response, context);
+
+        Assert.assertEquals(status, AuthenticatorFlowStatus.FAIL_COMPLETED);
+        verify(response, never()).sendRedirect(anyString());
+        Assert.assertNull(context.getProperty(OTP), "No OTP must be generated for a blocked enrollment.");
+        Assert.assertNull(context.getProperty(AUTHENTICATOR_NAME + FAIL_STEP),
+                "The mark must be cleared once consumed.");
     }
 
     @Test(description = "process() with SUBMIT_OTP and valid OTP returns SUCCESS_COMPLETED and resets retry/resend counts")
@@ -580,10 +608,29 @@ public class AbstractOTPAuthenticatorFlowTest {
         private Map<String, String> runtimeParams = new HashMap<>();
         private boolean canHandle = false;
         private String errorCodeForRedirect = null;
+        private boolean failStepOnInitiation = false;
 
         void setRuntimeParams(Map<String, String> params) {
 
             this.runtimeParams = params != null ? params : new HashMap<>();
+        }
+
+        void setFailStepOnInitiation(boolean failStepOnInitiation) {
+
+            this.failStepOnInitiation = failStepOnInitiation;
+        }
+
+        @Override
+        protected void initiateAuthenticationRequest(HttpServletRequest request, HttpServletResponse response,
+                                                     AuthenticationContext context)
+                throws AuthenticationFailedException {
+
+            if (failStepOnInitiation) {
+                // The enrollment handler of the channel marks the step to fail, without writing a response.
+                context.setProperty(AUTHENTICATOR_NAME + FAIL_STEP, true);
+                return;
+            }
+            super.initiateAuthenticationRequest(request, response, context);
         }
 
         void setCanHandle(boolean canHandle) {
